@@ -10,10 +10,18 @@ import re
 import shutil
 import sys
 
-from setuptools import setup, Extension  # pylint: disable=g-multiple-import
+from setuptools import setup, Extension
 
 # Path to directory containing setup.py
 here = os.path.abspath(os.path.dirname(__file__))
+
+# Get the pybind11 setup helpers
+#
+# This is appended, so if already available in site-packages, that is used
+# instead
+sys.path.append(os.path.join(here, "pybind11"))
+
+from pybind11.setup_helpers import Pybind11Extension  # pylint: disable=g-import-not-at-top,wrong-import-position
 
 try:
   # The repository root is not on the pythonpath with PEP 517 builds
@@ -49,9 +57,33 @@ def get_parser_ext():
           'pytype/pyi/parser.tab.cc',
       ],
       extra_compile_args=extra_compile_args,
-      extra_link_args=extra_link_args
+      extra_link_args=extra_link_args,
   )
 
+
+def get_typegraph_ext():
+  """Generates the typegraph extension."""
+  return Pybind11Extension(
+    'pytype.typegraph.cfg',
+    sources=[
+      "pytype/typegraph/cfg.cc",
+      "pytype/typegraph/cfg_logging.cc",
+      "pytype/typegraph/pylogging.cc",
+      "pytype/typegraph/reachable.cc",
+      "pytype/typegraph/solver.cc",
+      "pytype/typegraph/typegraph.cc",
+    ],
+    depends=[
+      "pytype/typegraph/cfg_logging.h",
+      "pytype/typegraph/map_util.h",
+      "pytype/typegraph/memory_util.h",
+      "pytype/typegraph/pylogging.h",
+      "pytype/typegraph/reachable.h",
+      "pytype/typegraph/solver.h",
+      "pytype/typegraph/typegraph.h",
+    ],
+    cxx_std=11,
+  )
 
 def copy_typeshed():
   """Windows install workaround: copy typeshed if the symlink doesn't work."""
@@ -118,7 +150,7 @@ if build_utils:
 setup(
     long_description=get_long_description(),
     package_data={'pytype': get_data_files()},
-    ext_modules=[get_parser_ext()],
+    ext_modules=[get_parser_ext(), get_typegraph_ext()],
 )
 
 if build_utils:

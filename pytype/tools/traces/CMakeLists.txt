@@ -19,12 +19,13 @@ py_library(
     traces.py
   DEPS
     .source
-    .visitor
+    pytype.analyze
     pytype.config
     pytype.errors
     pytype.libvm
     pytype.pytd_defs
     pytype.pytd_for_parser
+    pytype.ast.visitor
 )
 
 py_test(
@@ -56,20 +57,4 @@ py_test(
     source_test.py
   DEPS
     .source
-)
-
-py_library(
-  NAME
-    visitor
-  SRCS
-    visitor.py
-)
-
-py_test(
-  NAME
-    visitor_test
-  SRCS
-    visitor_test.py
-  DEPS
-    .visitor
 )

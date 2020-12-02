@@ -224,12 +224,13 @@ class BuiltinTests3(test_base.TargetIndependentTest):
       c, d, e = x
     """, deep=False)
     self.assertTypesMatchPytd(ty, """
-      x = ...  # type: list[int or str]
+      from typing import List, Union
+      x = ...  # type: List[Union[int, str]]
       a = ...  # type: int
       b = ...  # type: str
-      c = ...  # type: int or str
-      d = ...  # type: int or str
-      e = ...  # type: int or str
+      c = ...  # type: Union[int, str]
+      d = ...  # type: Union[int, str]
+      e = ...  # type: Union[int, str]
     """)
 
   def test_bytearray_setitem(self):
@@ -372,6 +373,18 @@ class BuiltinTests3(test_base.TargetIndependentTest):
     errors = self.CheckWithErrors("', '.join([1, 2, 3])  # wrong-arg-types[e]")
     self.assertErrorRegexes(
         errors, {"e": r"Expected.*Iterable\[str\].*Actual.*List\[int\]"})
+
+  def test_int_protocols(self):
+    self.Check("""
+      class Foo:
+        def __int__(self):
+          return 0
+      class Bar:
+        def __trunc__(self):
+          return 0
+      int(Foo())
+      int(Bar())
+    """)
 
 
 test_base.main(globals(), __name__ == "__main__")

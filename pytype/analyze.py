@@ -16,6 +16,7 @@ from pytype import special_builtins
 from pytype import state as frame_state
 from pytype import vm
 from pytype.overlays import typing_overlay
+from pytype.pytd import escape
 from pytype.pytd import optimize
 from pytype.pytd import pytd
 from pytype.pytd import pytd_utils
@@ -58,7 +59,6 @@ class CallTracer(vm.VirtualMachine):
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
     self._unknowns = {}
-    self._builtin_map = {}
     self._calls = set()
     self._method_calls = set()
     # Used by init_class.
@@ -399,7 +399,7 @@ class CallTracer(vm.VirtualMachine):
 
   def analyze_toplevel(self, node, defs):
     for name, var in sorted(defs.items()):  # sort, for determinicity
-      if name not in self._builtin_map:
+      if not self._is_typing_member(name, var):
         for value in var.bindings:
           if isinstance(value.data, abstract.InterpreterClass):
             new_node = self.analyze_class(node, value)
@@ -431,16 +431,6 @@ class CallTracer(vm.VirtualMachine):
     self._analyzing = True
     node = node.ConnectNew(name="Analyze")
     return self.analyze_toplevel(node, defs)
-
-  def trace_module_member(self, module, name, member):
-    if module is None or isinstance(module, typing_overlay.TypingOverlay):
-      # TypingOverlay takes precedence over typing.pytd.
-      trace = True
-    else:
-      trace = (module.ast is self.loader.typing
-               and name not in self._builtin_map)
-    if trace:
-      self._builtin_map[name] = member.data
 
   def trace_unknown(self, name, unknown_binding):
     self._unknowns[name] = unknown_binding
@@ -496,7 +486,7 @@ class CallTracer(vm.VirtualMachine):
       data.append(pytd.Constant(name, t))
     for name, var in defs.items():
       if (name in output.TOP_LEVEL_IGNORE or name in annotated_names or
-          self._is_builtin(name, var.data)):
+          self._is_typing_member(name, var)):
         continue
       options = var.FilteredData(self.exitpoint, strict=False)
       if (len(options) > 1 and
@@ -552,15 +542,17 @@ class CallTracer(vm.VirtualMachine):
                                      pytd.METHOD))
     return functions
 
-  def _is_builtin(self, name, data):
-    return self._builtin_map.get(name) == data
-
-  def _pack_name(self, name):
-    """Pack a name, for unpacking with type_match.unpack_name_of_partial()."""
-    return "~" + name.replace(".", "~")
+  def _is_typing_member(self, name, var):
+    for module_name in ("typing", "typing_extensions"):
+      if module_name not in self.loaded_overlays:
+        continue
+      module = self.loaded_overlays[module_name].get_module(name)
+      if name in module.members and module.members[name].data == var.data:
+        return True
+    return False
 
   def pytd_functions_for_call_traces(self):
-    return self._call_traces_to_function(self._calls, self._pack_name)
+    return self._call_traces_to_function(self._calls, escape.pack_partial)
 
   def pytd_classes_for_call_traces(self):
     class_to_records = collections.defaultdict(list)
@@ -577,7 +569,7 @@ class CallTracer(vm.VirtualMachine):
     for cls, call_records in class_to_records.items():
       full_name = cls.module + "." + cls.name if cls.module else cls.name
       classes.append(pytd.Class(
-          name=self._pack_name(full_name),
+          name=escape.pack_partial(full_name),
           metaclass=None,
           parents=(pytd.NamedType("__builtin__.object"),),  # not used in solver
           methods=tuple(self._call_traces_to_function(call_records)),
@@ -605,7 +597,7 @@ class CallTracer(vm.VirtualMachine):
     ty = ty.Visit(optimize.CombineReturnsAndExceptions())
     ty = ty.Visit(optimize.PullInMethodClasses())
     ty = ty.Visit(visitors.DefaceUnresolved(
-        [ty, self.loader.concat_all()], "~unknown"))
+        [ty, self.loader.concat_all()], escape.UNKNOWN))
     return ty.Visit(visitors.AdjustTypeParameters())
 
   def _check_return(self, node, actual, formal):
@@ -619,11 +611,8 @@ class CallTracer(vm.VirtualMachine):
     if not bad:
       bad = self.matcher.bad_matches(actual, formal, node)
     if bad:
-      with self.convert.pytd_convert.produce_detailed_output():
-        combined = pytd_utils.JoinTypes(
-            view[actual].data.to_type(node, view=view) for view in bad)
-        self.errorlog.bad_return_type(
-            self.frames, combined, formal.get_instance_type(node))
+      self.errorlog.bad_return_type(
+          self.frames, node, formal, actual, bad)
     return not bad
 
 

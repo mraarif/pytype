@@ -28,7 +28,7 @@ class TypingTest(test_base.TargetIndependentTest):
     self.assertTypesMatchPytd(ty, """
       from typing import Any, List
       typing = ...  # type: module
-      def f() -> List[int]
+      def f() -> List[int]: ...
     """)
 
   def test_cast2(self):
@@ -183,22 +183,39 @@ class TypingTest(test_base.TargetIndependentTest):
       """, pythonpath=[d.path])
     self.assertErrorRegexes(errors, {"e": r"ClassVar.*1.*2"})
 
+  def test_not_supported_yet(self):
+    # Tests that typing_extension members not implemented in
+    # typing_extensions_overlay are reported as [not-supported-yet]. If this
+    # test starts failing due to this specific member gaining support, just pick
+    # an unsupported member to replace it with from
+    # https://github.com/python/typeshed/blob/master/third_party/2and3/typing_extensions.pyi
+    self.CheckWithErrors("""
+      from typing_extensions import TypedDict  # not-supported-yet
+    """)
+
+  def test_reuse_name(self):
+    ty = self.Infer("""
+      from typing import Sequence as Sequence_
+      Sequence = Sequence_[int]
+    """)
+    self.assertTypesMatchPytd(ty, """
+      import typing
+      from typing import Any
+      Sequence = typing.Sequence[int]
+      Sequence_: Any
+    """)
+
 
 class LiteralTest(test_base.TargetIndependentTest):
   """Tests for typing.Literal."""
-
-  def test_py(self):
-    self.CheckWithErrors("""
-      from typing import Literal  # not-supported-yet
-    """)
 
   def test_pyi_parameter(self):
     with file_utils.Tempdir() as d:
       d.create_file("foo.pyi", """
         from typing import Literal
-        def f(x: Literal[True]) -> int
-        def f(x: Literal[False]) -> float
-        def f(x: bool) -> complex
+        def f(x: Literal[True]) -> int: ...
+        def f(x: Literal[False]) -> float: ...
+        def f(x: bool) -> complex: ...
       """)
       ty = self.Infer("""
         import foo
@@ -281,8 +298,8 @@ class LiteralTest(test_base.TargetIndependentTest):
     with file_utils.Tempdir() as d:
       d.create_file("foo.pyi", """
         from typing import Literal
-        def f(x: Literal[False, None]) -> int
-        def f(x) -> str
+        def f(x: Literal[False, None]) -> int: ...
+        def f(x) -> str: ...
       """)
       ty = self.Infer("""
         import foo
@@ -356,6 +373,30 @@ class LiteralTest(test_base.TargetIndependentTest):
         from typing import Any
         foo: module
         v: Any
+      """)
+
+  def test_literal_constant(self):
+    with file_utils.Tempdir() as d:
+      d.create_file("foo.pyi", """
+        from typing import Literal, overload
+        x: Literal["x"]
+        y: Literal["y"]
+        @overload
+        def f(arg: Literal["x"]) -> int: ...
+        @overload
+        def f(arg: Literal["y"]) -> str: ...
+      """)
+      ty = self.Infer("""
+        import foo
+        def f1():
+          return foo.f(foo.x)
+        def f2():
+          return foo.f(foo.y)
+      """, pythonpath=[d.path])
+      self.assertTypesMatchPytd(ty, """
+        foo: module
+        def f1() -> int: ...
+        def f2() -> str: ...
       """)
 
 

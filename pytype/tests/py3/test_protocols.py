@@ -204,7 +204,7 @@ class ProtocolTest(test_base.TargetPython3BasicTest):
       class Bar(object):
         def __getitem__(self, i: T) -> T: ...
       T2 = TypeVar("T2")
-      def f(s: Iterable[T2]) -> Iterator[T2]
+      def f(s: Iterable[T2]) -> Iterator[T2]: ...
     """)
 
   def test_iterable_iter(self):
@@ -223,7 +223,7 @@ class ProtocolTest(test_base.TargetPython3BasicTest):
       class Bar(object):
         def __iter__(self) -> Iterator: ...
       T = TypeVar("T")
-      def f(s: Iterable[T]) -> Iterator[T]
+      def f(s: Iterable[T]) -> Iterator[T]: ...
     """)
 
   def test_pyi_iterable_getitem(self):
@@ -244,8 +244,9 @@ class ProtocolTest(test_base.TargetPython3BasicTest):
   def test_pyi_iterable_iter(self):
     with file_utils.Tempdir() as d:
       d.create_file("foo.pyi", """
+        from typing import Any
         class Foo(object):
-          def __iter__(self) -> ?: ...
+          def __iter__(self) -> Any: ...
       """)
       self.Check("""
         from typing import Iterable, TypeVar
@@ -332,6 +333,24 @@ class ProtocolTest(test_base.TargetPython3BasicTest):
       f(Foo())  # wrong-arg-types[e]
     """)
     self.assertErrorRegexes(errors, {"e": r"Hashable.*Foo.*__hash__"})
+
+  def test_hash_type(self):
+    self.Check("""
+      from typing import Hashable, Type
+      def f(x: Hashable):
+        pass
+      def g(x: Type[int]):
+        return f(x)
+    """)
+
+  def test_hash_module(self):
+    self.Check("""
+      import subprocess
+      from typing import Hashable
+      def f(x: Hashable):
+        pass
+      f(subprocess)
+    """)
 
   def test_generic_callable(self):
     with file_utils.Tempdir() as d:
@@ -585,6 +604,30 @@ class ProtocolTest(test_base.TargetPython3BasicTest):
         foo.accepts_foo(int)
         foo.accepts_foo(str)  # wrong-arg-types
       """, pythonpath=[d.path])
+
+  def test_classmethod(self):
+    # TODO(rechen): An instance method shouldn't match a classmethod.
+    self.CheckWithErrors("""
+      from typing import Protocol
+      class Foo(Protocol):
+        @classmethod
+        def f(cls):
+          return cls()
+      class Bar:
+        @classmethod
+        def f(cls):
+          return cls()
+      class Baz:
+        def f(self):
+          return type(self)
+      class Qux:
+        pass
+      def f(x: Foo):
+        pass
+      f(Bar())
+      f(Baz())
+      f(Qux())  # wrong-arg-types
+    """)
 
 
 class ProtocolsTestPython3Feature(test_base.TargetPython3FeatureTest):

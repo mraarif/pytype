@@ -19,9 +19,10 @@ class TestUtils(parser_test_base.ParserTest):
   def test_unpack_union(self):
     """Test for UnpackUnion."""
     ast = self.Parse("""
-      c1 = ...  # type: int or float
+      from typing import Union
+      c1 = ...  # type: Union[int, float]
       c2 = ...  # type: int
-      c3 = ...  # type: list[int or float]""")
+      c3 = ...  # type: list[Union[int, float]]""")
     c1 = ast.Lookup("c1").type
     c2 = ast.Lookup("c2").type
     c3 = ast.Lookup("c3").type
@@ -34,7 +35,7 @@ class TestUtils(parser_test_base.ParserTest):
     ast1 = self.Parse("""
       c1 = ...  # type: int
 
-      def f1() -> int
+      def f1() -> int: ...
 
       class Class1(object):
         pass
@@ -42,7 +43,7 @@ class TestUtils(parser_test_base.ParserTest):
     ast2 = self.Parse("""
       c2 = ...  # type: int
 
-      def f2() -> int
+      def f2() -> int: ...
 
       class Class2(object):
         pass
@@ -51,8 +52,8 @@ class TestUtils(parser_test_base.ParserTest):
       c1 = ...  # type: int
       c2 = ...  # type: int
 
-      def f1() -> int
-      def f2() -> int
+      def f1() -> int: ...
+      def f2() -> int: ...
 
       class Class1(object):
           pass
@@ -115,7 +116,7 @@ class TestUtils(parser_test_base.ParserTest):
     self.assertIsInstance(pytd_utils.JoinTypes([]), pytd.NothingType)
 
   def test_join_anything_types(self):
-    """Test that JoinTypes() simplifies unions containing '?'."""
+    """Test that JoinTypes() simplifies unions containing 'Any'."""
     types = [pytd.AnythingType(), pytd.NamedType("a")]
     self.assertIsInstance(pytd_utils.JoinTypes(types), pytd.AnythingType)
 
@@ -144,22 +145,6 @@ class TestUtils(parser_test_base.ParserTest):
         pytd.Function("f2", (s2, s2), pytd.METHOD),
         mykeyword="foobar"))
 
-  def test_print(self):
-    """Smoketest for printing pytd."""
-    ast = self.Parse("""
-      c1 = ...  # type: int
-      T = TypeVar('T')
-      class A(typing.Generic[T], object):
-        bar = ...  # type: T
-        def foo(self, x: list[int], y: T) -> list[T] or float:
-          raise ValueError()
-      X = TypeVar('X')
-      Y = TypeVar('Y')
-      def bar(x: X or Y) -> ?
-    """)
-    # TODO(b/159051689): Do more extensive testing.
-    pytd_utils.Print(ast)
-
   def test_named_type_with_module(self):
     """Test NamedTypeWithModule()."""
     self.assertEqual(pytd_utils.NamedTypeWithModule("name"),
@@ -179,15 +164,15 @@ class TestUtils(parser_test_base.ParserTest):
     """Test WrapTypeDeclUnit."""
     ast1 = self.Parse("""
       c = ...  # type: int
-      def f(x: int) -> int
-      def f(x: float) -> float
+      def f(x: int) -> int: ...
+      def f(x: float) -> float: ...
       class A(object):
         pass
     """)
     ast2 = self.Parse("""
       c = ...  # type: float
       d = ...  # type: int
-      def f(x: complex) -> complex
+      def f(x: complex) -> complex: ...
       class B(object):
         pass
     """)
@@ -196,11 +181,12 @@ class TestUtils(parser_test_base.ParserTest):
         ast1.classes + ast1.functions + ast1.constants +
         ast2.classes + ast2.functions + ast2.constants)
     expected = textwrap.dedent("""
-      c = ...  # type: int or float
+      from typing import Union
+      c = ...  # type: Union[int, float]
       d = ...  # type: int
-      def f(x: int) -> int
-      def f(x: float) -> float
-      def f(x: complex) -> complex
+      def f(x: int) -> int: ...
+      def f(x: float) -> float: ...
+      def f(x: complex) -> complex: ...
       class A(object):
         pass
       class B(object):
@@ -384,18 +370,20 @@ class TestUtils(parser_test_base.ParserTest):
     # different. The union types are different (int,str) vs (str,int) but the
     # ordering is ignored when testing for equality (which ASTeq uses).
     src1 = textwrap.dedent("""
-        def foo(a: int or str) -> C
+        from typing import Union
+        def foo(a: Union[int, str]) -> C: ...
         T = TypeVar('T')
         class C(typing.Generic[T], object):
-            def bar(x: T) -> NoneType
+            def bar(x: T) -> NoneType: ...
         CONSTANT = ...  # type: C[float]
         """)
     src2 = textwrap.dedent("""
+        from typing import Union
         CONSTANT = ...  # type: C[float]
         T = TypeVar('T')
         class C(typing.Generic[T], object):
-            def bar(x: T) -> NoneType
-        def foo(a: str or int) -> C
+            def bar(x: T) -> NoneType: ...
+        def foo(a: Union[str, int]) -> C: ...
         """)
     tree1 = parser.parse_string(src1, python_version=self.python_version)
     tree2 = parser.parse_string(src2, python_version=self.python_version)
@@ -496,6 +484,60 @@ class TestDataFiles(parser_test_base.ParserTest):
     self.assertFalse(t)
     t.add_type(pytd.AnythingType())
     self.assertTrue(t)
+
+
+class PrintTest(parser_test_base.ParserTest):
+  """Test pytd_utils.Print."""
+
+  def test_smoke(self):
+    """Smoketest for printing pytd."""
+    ast = self.Parse("""
+      from typing import Any, Union
+      c1 = ...  # type: int
+      T = TypeVar('T')
+      class A(typing.Generic[T], object):
+        bar = ...  # type: T
+        def foo(self, x: list[int], y: T) -> Union[list[T], float]:
+          raise ValueError()
+      X = TypeVar('X')
+      Y = TypeVar('Y')
+      def bar(x: Union[X, Y]) -> Any: ...
+    """)
+    # TODO(b/159051689): Do more extensive testing.
+    pytd_utils.Print(ast)
+
+  def test_literal(self):
+    ast = self.Parse("""
+      from typing import Literal
+      x1: Literal[""]
+      x2: Literal[b""]
+      x3: Literal[u""]
+      x4: Literal[0]
+      x5: Literal[True]
+      x6: Literal[None]
+    """)
+    ast = ast.Visit(visitors.LookupBuiltins(self.loader.builtins))
+    self.assertMultiLineEqual(pytd_utils.Print(ast), textwrap.dedent("""
+      from typing import Literal
+
+      x1: Literal[""]
+      x2: Literal[b""]
+      x3: Literal[u""]
+      x4: Literal[0]
+      x5: Literal[True]
+      x6: None
+    """).strip())
+
+  def test_literal_union(self):
+    ast = self.Parse("""
+      from typing import Literal, Union
+      x: Union[Literal["x"], Literal["y"]]
+    """)
+    self.assertMultiLineEqual(pytd_utils.Print(ast), textwrap.dedent("""
+      from typing import Literal
+
+      x: Literal["x", "y"]
+    """).strip())
 
 
 if __name__ == "__main__":

@@ -5,7 +5,6 @@ import logging
 
 from pytype import abstract
 from pytype import abstract_utils
-from pytype import compat
 from pytype import datatypes
 from pytype import function
 from pytype import mixin
@@ -16,7 +15,6 @@ from pytype.overlays import typing_overlay
 from pytype.pytd import pep484
 from pytype.pytd import pytd
 from pytype.pytd import pytd_utils
-from pytype.pytd.parse import parser_constants
 
 
 log = logging.getLogger(__name__)
@@ -383,7 +381,8 @@ class AbstractMatcher(utils.VirtualMachineWeakrefMixin):
         other_type = other_type.get_formal_type_parameter(abstract_utils.RET)
         return self._instantiate_and_match(left, other_type, subst, node, view)
       elif other_type.full_name in [
-          "__builtin__.type", "__builtin__.object", "typing.Callable"]:
+          "__builtin__.type", "__builtin__.object", "typing.Callable",
+          "typing.Hashable"]:
         return subst
       elif _is_callback_protocol(other_type):
         return self._match_type_against_callback_protocol(
@@ -393,7 +392,8 @@ class AbstractMatcher(utils.VirtualMachineWeakrefMixin):
             left, other_type, subst, node, view)
     elif isinstance(left, abstract.Module):
       if other_type.full_name in [
-          "__builtin__.module", "__builtin__.object", "types.ModuleType"]:
+          "__builtin__.module", "__builtin__.object", "types.ModuleType",
+          "typing.Hashable"]:
         return subst
     elif isinstance(left, abstract.FUNCTION_TYPES):
       if other_type.full_name == "typing.Callable":
@@ -418,6 +418,9 @@ class AbstractMatcher(utils.VirtualMachineWeakrefMixin):
       elif _is_callback_protocol(other_type):
         return self._match_type_against_callback_protocol(
             left, other_type, subst, node, view)
+      elif left.cls:
+        return self._match_type_against_type(
+            abstract.Instance(left.cls, self.vm), other_type, subst, node, view)
       else:
         return None
     elif isinstance(left, dataclass_overlay.FieldInstance) and left.default:
@@ -677,14 +680,27 @@ class AbstractMatcher(utils.VirtualMachineWeakrefMixin):
           return None
       elif isinstance(other_type, abstract.ParameterizedClass):
         class_param = other_type.get_formal_type_parameter(abstract_utils.T)
+        # Copying the parameters directly preserves literal values. In most
+        # cases, we shouldn't assume that objects with the same type have the
+        # same value, but substituting from a concrete tuple into an abstract
+        # one typically happens during operations like tuple iteration, when
+        # values are indeed preserved. See
+        # tests.py3.test_typing.LiteralTest.test_iterate for a case in which
+        # this is important.
+        copy_params_directly = (
+            class_param.full_name == f"{left.full_name}.{abstract_utils.T}")
         # If we merge in the new substitution results prematurely, then we'll
         # accidentally trigger _enforce_common_superclass.
         new_substs = []
         for instance_param in instance.pyval:
-          new_subst = self.match_var_against_type(
-              instance_param, class_param, subst, node, view)
-          if new_subst is None:
-            return None
+          if copy_params_directly:
+            new_subst = {class_param.full_name: view[
+                instance_param].AssignToNewVariable(node)}
+          else:
+            new_subst = self.match_var_against_type(
+                instance_param, class_param, subst, node, view)
+            if new_subst is None:
+              return None
           new_substs.append(new_subst)
         if new_substs:
           subst = self._merge_substs(subst, new_substs)
@@ -735,33 +751,6 @@ class AbstractMatcher(utils.VirtualMachineWeakrefMixin):
         return None
     return subst
 
-  def _match_pyval_against_string(self, pyval, string, subst):
-    """Matches a concrete value against a string literal."""
-    assert isinstance(string, str)
-
-    if pyval.__class__ is str:  # native str
-      left_type = "bytes" if self.vm.PY2 else "unicode"
-    elif isinstance(pyval, compat.BytesType):
-      left_type = "bytes"
-    elif isinstance(pyval, compat.UnicodeType):
-      left_type = "unicode"
-    else:
-      return None
-    # needs to be native str to match `string`
-    left_value = compat.native_str(pyval)
-
-    right_prefix, right_value = (
-        parser_constants.STRING_RE.match(string).groups()[:2])
-    if "b" in right_prefix or "u" not in right_prefix and self.vm.PY2:
-      right_type = "bytes"
-    else:
-      right_type = "unicode"
-    right_value = right_value[1:-1]  # remove quotation marks
-
-    if left_type == right_type and left_value == right_value:
-      return subst
-    return None
-
   def _match_class_and_instance_against_type(
       self, left, instance, other_type, subst, node, view):
     """Checks whether an instance of a type is compatible with a (formal) type.
@@ -779,9 +768,6 @@ class AbstractMatcher(utils.VirtualMachineWeakrefMixin):
     if isinstance(other_type, abstract.LiteralClass):
       other_value = other_type.value
       if other_value and isinstance(instance, abstract.AbstractOrConcreteValue):
-        if isinstance(other_value.pyval, str):
-          return self._match_pyval_against_string(
-              instance.pyval, other_value.pyval, subst)
         return subst if instance.pyval == other_value.pyval else None
       elif other_value:
         # `instance` does not contain a concrete value. Literal overloads are
@@ -838,7 +824,9 @@ class AbstractMatcher(utils.VirtualMachineWeakrefMixin):
           left_methods.pop(c.name, None)
       elif isinstance(cls, abstract.InterpreterClass):
         for name, member in cls.members.items():
-          if any(isinstance(data, abstract.Function) for data in member.data):
+          if any(isinstance(data, (
+              abstract.Function, special_builtins.ClassMethodInstance,
+              special_builtins.StaticMethodInstance)) for data in member.data):
             left_methods[name] = member
           else:
             left_methods.pop(name, None)
@@ -961,7 +949,11 @@ class AbstractMatcher(utils.VirtualMachineWeakrefMixin):
   def _enforce_single_type(self, var, node):
     """Enforce that the variable contains only one concrete type."""
     concrete_values, classes = self._get_concrete_values_and_classes(var)
-    if len(set(classes)) > 1:
+    class_names = {c.full_name for c in classes}
+    for compat_name, name in _COMPATIBLE_BUILTINS:
+      if {compat_name, name} <= class_names:
+        class_names.remove(compat_name)
+    if len(class_names) > 1:
       # We require all occurrences to be of the same type, no subtyping allowed.
       return None
     if concrete_values and len(concrete_values) < len(var.data):

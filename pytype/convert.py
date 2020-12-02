@@ -18,6 +18,7 @@ from pytype.pyc import loadmarshal
 from pytype.pytd import mro
 from pytype.pytd import pytd
 from pytype.pytd import pytd_utils
+from pytype.pytd.parse import parser_constants
 from pytype.typegraph import cfg
 
 
@@ -516,6 +517,14 @@ class Converter(utils.VirtualMachineWeakrefMixin):
       return True
     elif pyval == self.vm.lookup_builtin("__builtin__.False"):
       return False
+    elif isinstance(pyval, str):
+      prefix, value = parser_constants.STRING_RE.match(pyval).groups()[:2]
+      value = value[1:-1]  # remove quotation marks
+      if "b" in prefix and not self.vm.PY2:
+        value = compat.bytestring(value)
+      elif "u" in prefix and self.vm.PY2:
+        value = compat.UnicodeType(value)
+      return value
     else:
       return pyval
 
@@ -781,8 +790,7 @@ class Converter(utils.VirtualMachineWeakrefMixin):
     elif isinstance(pyval, pytd.Literal):
       value = self.constant_to_value(
           self._get_literal_value(pyval.value), subst, self.vm.root_cfg_node)
-      return abstract.LiteralClass(
-          self.name_to_value("typing.Literal"), value, self.vm)
+      return abstract.LiteralClass(value, self.vm)
     elif pyval.__class__ is tuple:  # only match raw tuple, not namedtuple/Node
       return self.tuple_to_value([self.constant_to_var(item, subst,
                                                        self.vm.root_cfg_node)

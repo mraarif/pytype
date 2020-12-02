@@ -7,6 +7,7 @@ like to use, feel free to propose moving it here.
 
 import collections
 import logging
+import re
 
 from pytype.pytd import pytd
 from pytype.pytd.parse import parser_constants
@@ -280,6 +281,7 @@ class PrintVisitor(Visitor):
     self.imports = collections.defaultdict(set)
     self.in_alias = False
     self.in_parameter = False
+    self.in_literal = False
     self._unit_name = None
     self._local_names = set()
     self._class_members = set()
@@ -420,7 +422,13 @@ class PrintVisitor(Visitor):
 
   def VisitConstant(self, node):
     """Convert a class-level or module-level constant to a string."""
-    return self._SafeName(node.name) + ": " + node.type
+    if self.in_literal:
+      module, _, name = node.name.partition(".")
+      assert module == "__builtin__", module
+      assert name in ("True", "False"), name
+      return name
+    else:
+      return self._SafeName(node.name) + ": " + node.type
 
   def EnterAlias(self, _):
     self.old_imports = self.imports.copy()
@@ -737,14 +745,25 @@ class PrintVisitor(Visitor):
       A string representing the union of the types in type_list. Simplifies
       Union[X] to X and Union[X, None] to Optional[X].
     """
-    type_list = tuple(type_list)
-    if len(type_list) == 1:
-      return type_list[0]
-    elif "None" in type_list:
+    # Collect all literals, so we can print them using the Literal[x1, ..., xn]
+    # syntactic sugar.
+    literals = []
+    new_type_list = []
+    for t in type_list:
+      match = re.fullmatch(r"Literal\[(?P<content>.*)\]", t)
+      if match:
+        literals.append(match.group("content"))
+      else:
+        new_type_list.append(t)
+    if literals:
+      new_type_list.append("Literal[%s]" % ", ".join(literals))
+    if len(new_type_list) == 1:
+      return new_type_list[0]
+    elif "None" in new_type_list:
       return (self._FromTyping("Optional") + "[" +
-              self._BuildUnion(t for t in type_list if t != "None") + "]")
+              self._BuildUnion(t for t in new_type_list if t != "None") + "]")
     else:
-      return self._FromTyping("Union") + "[" + ", ".join(type_list) + "]"
+      return self._FromTyping("Union") + "[" + ", ".join(new_type_list) + "]"
 
   def _BuildIntersection(self, type_list):
     """Builds a intersection of the types in type_list.
@@ -761,6 +780,14 @@ class PrintVisitor(Visitor):
       return type_list[0]
     else:
       return " and ".join(type_list)
+
+  def EnterLiteral(self, _):
+    assert not self.in_literal
+    self.in_literal = True
+
+  def LeaveLiteral(self, _):
+    assert self.in_literal
+    self.in_literal = False
 
   def VisitLiteral(self, node):
     base = "Literal"

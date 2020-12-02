@@ -23,7 +23,6 @@ filegroup(
     pytd/builtins/2/numpy/__init__.pytd
     pytd/builtins/2/protocols.pytd
     pytd/builtins/2/typing.pytd
-    pytd/builtins/2/typing_extensions.pytd
 
     pytd/builtins/2and3/array.pytd
     pytd/builtins/2and3/attr/__init__.pytd
@@ -40,7 +39,6 @@ filegroup(
     pytd/builtins/2and3/numpy/__init__.pytd
     pytd/builtins/2and3/protocols.pytd
     pytd/builtins/2and3/typing.pytd
-    pytd/builtins/2and3/typing_extensions.pytd
 
     pytd/builtins/3/__builtin__.pytd
     pytd/builtins/3/array.pytd
@@ -59,7 +57,6 @@ filegroup(
     pytd/builtins/3/numpy/__init__.pytd
     pytd/builtins/3/protocols.pytd
     pytd/builtins/3/typing.pytd
-    pytd/builtins/3/typing_extensions.pytd
 
     pytd/stdlib/2/_ctypes.pytd
     pytd/stdlib/2/collections.pytd
@@ -146,8 +143,97 @@ py_library(
   SRCS
     io.py
   DEPS
+    .analyze
     .errors
     .libvm
+)
+
+py_library(
+  NAME
+    analyze
+  SRCS
+    analyze.py
+  DEPS
+    .libvm
+    .output
+    .vm
+    pytype.overlays.typing_overlay
+)
+
+py_library(
+  NAME
+    vm
+  SRCS
+    vm.py
+  DEPS
+    .annotations_util
+    .convert
+    .libvm
+    .matcher
+    .overlay_dict
+)
+
+py_library(
+  NAME
+    annotations_util
+  SRCS
+    annotations_util.py
+  DEPS
+    .libvm
+    pytype.overlays.typing_overlay
+)
+
+py_library(
+  NAME
+    convert
+  SRCS
+    convert.py
+  DEPS
+    .libvm
+    .output
+    pytype.overlays.typing_overlay
+)
+
+py_library(
+  NAME
+    matcher
+  SRCS
+    matcher.py
+  DEPS
+    .libvm
+    pytype.overlays.dataclass_overlay
+    pytype.overlays.typing_overlay
+)
+
+py_library(
+  NAME
+    output
+  SRCS
+    output.py
+  DEPS
+    .libvm
+    pytype.overlays.dataclass_overlay
+    pytype.overlays.typing_overlay
+)
+
+py_library(
+  NAME
+    overlay_dict
+  SRCS
+    overlay_dict.py
+  DEPS
+    pytype.overlays.abc_overlay
+    pytype.overlays.asyncio_types_overlay
+    pytype.overlays.attr_overlay
+    pytype.overlays.collections_overlay
+    pytype.overlays.dataclass_overlay
+    pytype.overlays.flax_overlay
+    pytype.overlays.future_overlay
+    pytype.overlays.six_overlay
+    pytype.overlays.subprocess_overlay
+    pytype.overlays.sys_overlay
+    pytype.overlays.typing_extensions_overlay
+    pytype.overlays.typing_overlay
 )
 
 py_library(
@@ -156,36 +242,17 @@ py_library(
   SRCS
     __version__.py
     abstract.py
-    analyze.py
-    annotations_util.py
     attribute.py
     blocks.py
     compare.py
-    convert.py
     convert_structural.py
     directors.py
     imports_map_loader.py
-    matcher.py
     metaclass.py
-    output.py
     overlay.py
-    overlay_dict.py
     overlay_utils.py
-    overlays/abc_overlay.py
-    overlays/asyncio_types_overlay.py
-    overlays/attr_overlay.py
-    overlays/classgen.py
-    overlays/collections_overlay.py
-    overlays/dataclass_overlay.py
-    overlays/flax_overlay.py
-    overlays/future_overlay.py
-    overlays/six_overlay.py
-    overlays/subprocess_overlay.py
-    overlays/sys_overlay.py
-    overlays/typing_overlay.py
     special_builtins.py
     state.py
-    vm.py
   DEPS
     .abstract_utils
     .debug
@@ -230,6 +297,7 @@ py_library(
     .function
     .pytd_for_parser
     .utils
+    pytype.typegraph.cfg
 )
 
 py_library(
@@ -252,7 +320,6 @@ py_library(
     SRCS
       tools/arg_parser.py
       tools/config.py
-      tools/debug.py
       tools/environment.py
       tools/runner.py
       tools/tool_utils.py
@@ -277,15 +344,17 @@ py_library(
       .utils
 )
 
-py_library(
-  NAME
-    cfg_py
-  SRCS
-    typegraph/cfg.py
-  DEPS
-    .debug
-    .metrics
-)
+# This library is disabled because cfg.py can conflict with the typegraph.cfg
+# extension module.
+# py_library(
+#   NAME
+#     cfg_py
+#   SRCS
+#     typegraph/cfg.py
+#   DEPS
+#     .debug
+#     .metrics
+# )
 
 py_library(
   NAME
@@ -366,6 +435,7 @@ py_library(
   SRCS
     pytd/abc_hierarchy.py
     pytd/booleq.py
+    pytd/escape.py
     pytd/mro.py
     pytd/optimize.py
     pytd/pep484.py
@@ -492,6 +562,7 @@ py_test(
   DEPS
     .config
     .libvm
+    .vm
     pytype.tests.test_base
 )
 
@@ -504,6 +575,7 @@ py_test(
     .abstract_utils
     .config
     .libvm
+    .vm
     pytype.tests.test_base
 )
 
@@ -515,6 +587,7 @@ py_test(
   DEPS
     .config
     .libvm
+    .vm
     pytype.tests.test_base
 )
 
@@ -535,6 +608,7 @@ py_test(
   DEPS
     .config
     .libvm
+    .vm
     pytype.tests.test_base
 )
 
@@ -546,6 +620,7 @@ py_test(
   DEPS
     .config
     .libvm
+    .vm
     pytype.tests.test_base
 )
 
@@ -557,6 +632,7 @@ py_test(
   DEPS
     .config
     .libvm
+    .vm
     pytype.tests.test_base
 )
 
@@ -575,6 +651,7 @@ py_test(
   SRCS
     vm_test.py
   DEPS
+    .vm
     pytype.tests.test_base
 )
 
@@ -628,16 +705,6 @@ py_test(
     .libvm
 )
 
-py_test(
-  NAME
-    collections_overlay_test
-  SRCS
-    collections_overlay_test.py
-  DEPS
-    .libvm
-    pytype.tests.test_base
-)
-
 py_library(
   NAME
     pytdtest
@@ -658,6 +725,19 @@ py_test(
     .pytd
 )
 
+py_test(
+  NAME
+    typegraph_metrics_test
+  SRCS
+    typegraph_metrics_test.py
+  DEPS
+    .config
+    .libvm
+    pytype.typegraph.cfg
+    pytype.tests.test_base
+)
+
+add_subdirectory(ast)
 add_subdirectory(overlays)
 add_subdirectory(pyc)
 add_subdirectory(pyi)

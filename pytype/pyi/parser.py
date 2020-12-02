@@ -7,6 +7,7 @@ from pytype import file_utils
 from pytype import module_utils
 from pytype import utils
 from pytype.pyi import parser_ext  # pytype: disable=import-error
+from pytype.pytd import escape
 from pytype.pytd import pep484
 from pytype.pytd import pytd
 from pytype.pytd import pytd_utils
@@ -464,6 +465,9 @@ class _Parser:
     assert not aliases  # We handle top-level aliases in add_alias_or_constant.
     constants.extend(self._constants)
 
+    if self._ast_name == "__builtin__":
+      constants.extend(_builtin_keyword_constants())
+
     generated_classes = sum(self._generated_classes.values(), [])
 
     classes = generated_classes + classes
@@ -860,13 +864,18 @@ class _Parser:
     if self._is_literal_base_type(base_type):
       literal_parameters = []
       for p in parameters:
-        if self._is_none(p):
+        if self._is_none(p) or isinstance(p, pytd.Literal):
           literal_parameters.append(p)
-        elif isinstance(p, pytd.NamedType) and p.name not in ("True", "False"):
-          # TODO(b/123775699): support enums.
-          literal_parameters.append(pytd.AnythingType())
-        else:
+        elif isinstance(p, pytd.NamedType):
+          if p.name in ("True", "False"):
+            literal_parameters.append(pytd.Literal(p))
+          else:
+            # TODO(b/123775699): support enums.
+            literal_parameters.append(pytd.AnythingType())
+        elif isinstance(p, (int, str, bytes)):
           literal_parameters.append(pytd.Literal(p))
+        else:
+          raise ParseError("Literal[%s] not supported" % p)
       return pytd_utils.JoinTypes(literal_parameters)
     elif any(isinstance(p, (int, str)) for p in parameters):
       parameters = ", ".join(
@@ -1043,7 +1052,7 @@ class _Parser:
     fields = [(_handle_string_literal(n), t) for n, t in fields]
     # Handle previously defined NamedTuples with the same name
     prev_list = self._generated_classes[base_name]
-    class_name = "namedtuple-%s-%d" % (base_name, len(prev_list))
+    class_name = escape.pack_namedtuple_base_class(base_name, len(prev_list))
     class_parent = self._heterogeneous_tuple(pytd.NamedType("tuple"),
                                              tuple(t for _, t in fields))
     class_constants = tuple(pytd.Constant(n, t) for n, t in fields)
@@ -1674,3 +1683,13 @@ def _handle_string_literal(value):
   if not match:
     return value
   return match.groups()[1][1:-1]
+
+
+def _builtin_keyword_constants():
+  defs = [
+      ("True", "bool"),
+      ("False", "bool"),
+      ("None", "NoneType"),
+      ("__debug__", "bool")
+  ]
+  return [pytd.Constant(name, pytd.NamedType(typ)) for name, typ in defs]

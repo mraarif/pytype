@@ -2,29 +2,31 @@
 
 **Under Construction**
 
-This documentation is for developers of and contributors to pytype. It covers
-[tips][development-process] on suggested workflow, how to
-[upgrade][python-upgrade] pytype for new Python versions, and pytype's core
-concepts and code layout.
+<!-- TODO(b/151848869):
+* Add documentation for: config.py
+* For completeness, mention: copybara, imports_map, blaze integration
+* Add non-typegraph things to "Basic concepts" and "Important code components"
+* Coordinate dev guide and CONTRIBUTING.md
+  (https://github.com/google/pytype/issues/570)
+-->
+
+This documentation is for developers of and contributors to pytype. It covers:
+
+* [tips][development-process] on suggested workflow
+* how to [upgrade][python-upgrade] pytype for new Python versions,
+* how to [support][supporting-features] new typing features,
+* and pytype's core concepts and code layout.
 
 <!--ts-->
    * [Developer guide](#developer-guide)
       * [Introduction](#introduction)
       * [Basic concepts](#basic-concepts)
-      * [Adding a new feature](#adding-a-new-feature)
       * [Important code components](#important-code-components)
-         * [AST representation of type stubs](#ast-representation-of-type-stubs)
-            * [Where stubs are located](#where-stubs-are-located)
-         * [Abstract representation of types](#abstract-representation-of-types)
-         * [Conversion between representations](#conversion-between-representations)
-         * [Bytecode handling](#bytecode-handling)
          * [CFG](#cfg)
             * [Typegraph](#typegraph)
-            * [Python interface](#python-interface)
-            * [Utilities](#utilities)
       * [Updating the developer guide](#updating-the-developer-guide)
 
-<!-- Added by: rechen, at: 2020-08-29T02:18-07:00 -->
+<!-- Added by: rechen, at: 2020-11-23T14:36-08:00 -->
 
 <!--te-->
 
@@ -78,7 +80,8 @@ arguments (`a` and `b` in `def f(a, b)`), and functions, classes and modules.
 A **Binding** associates a Variable with a value at a particular Node. In the
 example above, the Variable for `x` is bound to the value `5` at Node 2
 (`Binding(5, Node 2)`) and to `"a"` at Node 4 (`Binding("a", Node 4)`).
-Meanwhile, `y` has only a single binding: `Binding(6, Node 3)`.
+Meanwhile, `y` has only a single binding: `Binding(6, Node 3)`. The Bindings
+that a Variable is connected to represent the possible values for that Variable.
 
 Building up the CFG in this way allows pytype to perform type checking. When
 pytype reaches Node 5 (`z = x.upper() + str(y)`), it queries the CFG to find
@@ -96,32 +99,7 @@ only the code under `else:` will be executed, then pytype will report a
 `name-error` on `str(y)` because there is no path through the CFG where `y` is
 defined.
 
-## Adding a new feature
-
-pytd node, abstract value, conversion both ways
-
 ## Important code components
-
-### AST representation of type stubs
-
-`pytd/optimize.py`
-
-#### Where stubs are located
-
-typeshed, `pytd/builtins/`, `pytd/stdlib/`,
-`//devtools/python/blaze/pytype/overrides/`
-
-### Abstract representation of types
-
-`abstract.py`, `overlays/`
-
-### Conversion between representations
-
-`convert.py`
-
-### Bytecode handling
-
-`pyc/`, `vm.py`
 
 ### CFG
 
@@ -143,8 +121,6 @@ information. (In pytype, we use the two terms interchangeably.) `typegraph.h`
 covers the classes that are used to build the typegraph. Some of them were
 already mentioned earlier in Basic Concepts, namely Variables, Bindings and
 Nodes (called CFGNodes here).
-
-<!-- TODO(tsudol): Document the semantics of the CFG. When are nodes added? -->
 
 First is **CFGNode**, the building block of the CFG. A CFGNode corresponds to
 one or more opcodes in the Python program being analyzed. As mentioned
@@ -182,32 +158,28 @@ when `some_val` evaluates to `True`, while `1 -> 4 -> 5` is taken when
 the list of goals in a query. (Queries and goals are discussed in the [Solver]
 section.)
 
-<!-- Bindings
+CFGNodes may be associated with **Variables** by one or more **Bindings**. A
+simple case, `x = 5`, was explained above. In more complex cases, such as `y =
+m*x + b`, the Binding for `("m*x+b", n0)` is derived from several other
+Bindings. This is represented by an **Origin** that explains how the Binding is
+constructed. An Origin consists of two parts: the CFGNode of the Binding (`n0`,
+in this case) and a **Source Set**, which contains all the Bindings that are
+used to construct the Binding. In `y = m*x + b`, the Source Set is `{m, x, b}`.
+The Solver uses Source Sets when deciding if a Binding is visible at a
+particular node: for a Binding to be visible, all of the Bindings in its Source
+Sets must also be visible.
 
-- Used to bind a value to a variable at a particular node.
-- Can be a literal assignment (x = 5) or backed by "origins" that describe how
-  the value was created (x = y + z)
--->
-
-<!-- Variables
-- What they're created and used for
-- How bindings are added
-- Filter, Prune, etc.
--->
-
-<!-- Solver
-- Walk through the solving algorithm.
-- Going to need to add sections for all the extra parts, like SourceSets.
--->
-
-#### Python interface
-
-<!-- The cache is the most important thing here. -->
-
-#### Utilities
-
-<!-- Contents of cfg_utils and why you'd use it. -->
-
+Pytype often needs to know what Bindings are visible at a given node. "Visible"
+means there is a path in the CFG to the given node from the node where the
+Binding originates. Consider the example typegraph above: when checking if
+`x.upper()` is valid, pytype wants to know: "is `x` visible as a `str` at node
+5?" That Binding is set in node 4, and there's a path from node 4 to node 5 if
+`some_val` is False. Pytype will then ask: "is `some_val` False at node 4?"
+Since this is a limited example, pytype doesn't know, but it assumes that
+`some_val` may be False. (And it will also assume `some_val` may be True! This
+means "is `x` a `str`" and "is `x` an `int`" are both considered possible --
+which is safer when we don't know the value of `some_val`.) Therefore yes, `x`
+is visible as a `str` at node 5.
 
 ## Updating the developer guide
 
@@ -223,4 +195,5 @@ PNG, and embed the latter in docs for consistent rendering.
 [images-dir]: https://github.com/google/pytype/blob/master/docs/images/
 [main-loop]: main_loop.md
 [python-upgrade]: python_version_upgrades.md
+[supporting-features]: features.md
 [wiki-cfg]: https://en.wikipedia.org/wiki/Control-flow_graph

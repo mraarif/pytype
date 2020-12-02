@@ -7,7 +7,7 @@
       * [Mechanics](#mechanics)
       * [Adding an overlay](#adding-an-overlay)
 
-<!-- Added by: rechen, at: 2020-09-18T17:00-07:00 -->
+<!-- Added by: rechen, at: 2020-11-17T00:18-08:00 -->
 
 <!--te-->
 
@@ -40,7 +40,7 @@ class SysOverlay(overlay.Overlay):
 And the build method has access to the VM's `python_version` attribute:
 
 ```python
-def build_version_info(name, vm):
+def build_version_info(vm):
   [...]
   version = []
   # major, minor
@@ -57,8 +57,8 @@ Overlays inherit from the [overlay.Overlay][overlay.Overlay] class, a subclass
 of abstract.Module that [overrides][member-conversion] member lookup so that
 when a member name is present in the overlay map, the representation of that
 member is constructed by calling the constructor specified in the map. The
-constructor can be any Python object that accepts two arguments, the member name
-and the VM instance, and returns an abstract.AtomicAbstractValue instance.
+constructor can be any callable that accepts a VM instance and returns an
+abstract.AtomicAbstractValue instance.
 
 ## Adding an overlay
 
@@ -81,7 +81,7 @@ and the VM instance, and returns an abstract.AtomicAbstractValue instance.
    [libvm CMake target][libvm-cmake].
 1. In the `{Module}Overlay` initializer, add an entry to `member_map` for each
    new member. The key should be the member name and the value the constructor.
-1. Implememt the new module members! The existing overlays contain plenty of
+1. Implement the new module members! The existing overlays contain plenty of
    examples of how to do this.
 
 [libvm-cmake]: https://github.com/google/pytype/blob/2f2a1483751171421490c352f05955655ea572fa/pytype/CMakeLists.txt#L171-L182

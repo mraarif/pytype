@@ -1,4 +1,4 @@
-[![Tests](https://travis-ci.org/google/pytype.svg?branch=master)](https://travis-ci.org/google/pytype)
+[![CI](https://github.com/google/pytype/workflows/CI/badge.svg?branch=master)](https://github.com/google/pytype/actions)
 [![PyPI - Wheel](https://img.shields.io/pypi/wheel/pytype)](https://pypi.org/project/pytype/#files)
 
 # pytype - 🦆✔
@@ -89,7 +89,7 @@ merge-pyi -i <filepath>.py .pytype/pyi/<filename>.pyi
 
 ## Requirements
 
-You need a Python 3.5-3.8 interpreter to run pytype, as well as an
+You need a Python 3.6-3.8 interpreter to run pytype, as well as an
 interpreter in `$PATH` for the Python version of the code you're analyzing
 (supported: 2.7, 3.5-3.8).
 

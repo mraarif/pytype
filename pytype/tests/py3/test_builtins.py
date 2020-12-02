@@ -2,6 +2,7 @@
 
 from pytype import file_utils
 from pytype.tests import test_base
+from pytype.tests import test_utils
 
 
 class BuiltinTests(test_base.TargetPython3BasicTest):
@@ -234,12 +235,12 @@ class BuiltinPython3FeatureTest(test_base.TargetPython3FeatureTest):
       d = m.keys() ^ {1, 2, 3}
     """, deep=False)
     self.assertTypesMatchPytd(ty, """
-      from typing import Dict, Set
+      from typing import Dict, Set, Union
       m = ...  # type: Dict[str, None]
       a = ...  # type: Set[str]
       b = ...  # type: Set[str]
-      c = ...  # type: Set[int or str]
-      d = ...  # type: Set[int or str]
+      c = ...  # type: Set[Union[int, str]]
+      d = ...  # type: Set[Union[int, str]]
     """)
 
   def test_open(self):
@@ -297,7 +298,7 @@ class BuiltinPython3FeatureTest(test_base.TargetPython3FeatureTest):
     self.assertTypesMatchPytd(ty, """
       from typing import Iterator
       re: module
-      def f(x: int) -> None
+      def f(x: int) -> None: ...
       x1 = ...  # type: Iterator[str]
       x2 = ...  # type: Iterator[int]
       x3 = ...  # type: Iterator[bool, ...]
@@ -367,7 +368,7 @@ class BuiltinPython3FeatureTest(test_base.TargetPython3FeatureTest):
       class Foo(object):
         pass
 
-      def f() -> Iterator
+      def f() -> Iterator: ...
     """)
 
   def test_map1(self):
@@ -405,10 +406,10 @@ class BuiltinPython3FeatureTest(test_base.TargetPython3FeatureTest):
     """, deep=False)
     self.assertTypesMatchPytd(ty, """
       from typing import Dict, List, Union
-      def t_testDict() -> float or int
+      def t_testDict() -> Union[float, int]: ...
       # _i1_, _i2_ capture the more precise definitions of the ~dict, ~list
-      def _i1_(x: List[float]) -> List[Union[float, int]]
-      def _i2_(x: dict[complex or str, float or int]) -> Dict[complex or str, float or int]
+      def _i1_(x: List[float]) -> List[Union[float, int]]: ...
+      def _i2_(x: dict[Union[complex, str], Union[float, int]]) -> Dict[Union[complex, str], Union[float, int]]: ...
     """)
 
   def test_list_init(self):
@@ -533,7 +534,7 @@ class BuiltinPython3FeatureTest(test_base.TargetPython3FeatureTest):
     """)
     self.assertTypesMatchPytd(ty, """
       array = ...  # type: module
-      def t_testTobytes() -> bytes
+      def t_testTobytes() -> bytes: ...
     """)
 
   def test_iterator_builtins(self):
@@ -657,6 +658,23 @@ class BuiltinPython3FeatureTest(test_base.TargetPython3FeatureTest):
       from typing import SupportsFloat
       def f(x: SupportsFloat): pass
       f("")  # wrong-arg-types
+    """)
+
+  @test_utils.skipBeforePy((3, 8), "__index__ support is new in 3.8")
+  def test_int_from_index(self):
+    self.Check("""
+      class Foo:
+        def __index__(self):
+          return 0
+      int(Foo())
+    """)
+
+  def test_bytearray_compatible_with_bytes(self):
+    self.Check("""
+      def f(x):
+        # type: (bytes) -> None
+        pass
+      f(bytearray())
     """)
 
 

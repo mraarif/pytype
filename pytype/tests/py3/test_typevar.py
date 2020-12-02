@@ -149,12 +149,12 @@ class TypeVarTest(test_base.TargetPython3BasicTest):
       u = f(__any_object__)  # ok
     """)
     self.assertTypesMatchPytd(ty, """
-      from typing import Any, TypeVar
+      from typing import Any, TypeVar, Union
       T = TypeVar("T", int, float)
       def f(x: T) -> T: ...
       v = ...  # type: Any
       w = ...  # type: bool
-      u = ...  # type: int or float
+      u = ...  # type: Union[int, float]
     """)
     self.assertErrorRegexes(errors, {"e": r"Union\[float, int\].*str"})
 
@@ -209,15 +209,15 @@ class TypeVarTest(test_base.TargetPython3BasicTest):
   def test_filter_value(self):
     _, errors = self.InferWithErrors("""
       from typing import TypeVar
-      T = TypeVar("T", int, float)
+      T = TypeVar("T", str, float)
       def f(x: T, y: T): ...
-      x = 3
+      x = ''
       x = 42.0
-      f(x, 3)  # wrong-arg-types[e]
+      f(x, '')  # wrong-arg-types[e]
       f(x, 42.0)  # ok
     """)
     self.assertErrorRegexes(
-        errors, {"e": r"Expected.*y: float.*Actual.*y: int"})
+        errors, {"e": r"Expected.*y: float.*Actual.*y: str"})
 
   def test_filter_class(self):
     self.Check("""
@@ -301,7 +301,7 @@ class TypeVarTest(test_base.TargetPython3BasicTest):
     self.assertTypesMatchPytd(ty, """
       from typing import Any, TypeVar
       T = TypeVar("T", bound=float)
-      def f(x: T) -> T
+      def f(x: T) -> T: ...
       v1 = ...  # type: float
       v2 = ...  # type: bool
       v3 = ...  # type: int
@@ -401,7 +401,7 @@ class TypeVarTest(test_base.TargetPython3BasicTest):
       class A(Generic[T]):
           _foo: Any
           foo: Any
-          def __init__(self, foo: T) -> None
+          def __init__(self, foo: T) -> None: ...
     """)
 
   def test_return_typevar(self):
@@ -487,7 +487,7 @@ class TypeVarTestPy3(test_base.TargetPython3FeatureTest):
     self.assertTypesMatchPytd(ty, """
       from typing import List
       subprocess: module
-      def run(args: List[str]) -> str
+      def run(args: List[str]) -> str: ...
     """)
 
   def test_abstract_classmethod(self):

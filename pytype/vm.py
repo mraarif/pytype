@@ -623,6 +623,7 @@ class VirtualMachine:
           var = self.program.NewVariable()
         var.AddBinding(val, class_dict_var.bindings, node)
         node = val.call_metaclass_init(node)
+        node = val.call_init_subclass(node)
         if not val.is_abstract:
           # Since a class decorator could have made the class inherit from
           # ABCMeta, we have to mark concrete classes now and check for
@@ -652,8 +653,18 @@ class VirtualMachine:
         for name, value in e.bad_call.passed_args:
           if name != arg_name:
             continue
-          self.errorlog.annotation_type_mismatch(
-              self.frames, expected_type, value.to_binding(node), arg_name)
+          if value == self.convert.ellipsis:
+            # `...` should be a valid default parameter value for overloads.
+            # Unfortunately, the is_overload attribute is not yet set when
+            # _check_defaults runs, so we instead check that the method body is
+            # empty. As a side effect, `...` is allowed as a default value for
+            # any method that does nothing except return None.
+            should_report = not method.has_empty_body()
+          else:
+            should_report = True
+          if should_report:
+            self.errorlog.annotation_type_mismatch(
+                self.frames, expected_type, value.to_binding(node), arg_name)
           # Replace the bad default with Any so we can call match_args again to
           # find other type errors.
           try:
@@ -858,7 +869,7 @@ class VirtualMachine:
       for cls in subcls.mro:
         if cls == supercls:
           break
-        if cls.is_lazy:
+        if isinstance(cls, mixin.LazyMembers):
           cls.load_lazy_attribute(attr)
         if attr in cls.members and cls.members[attr].bindings:
           return True
@@ -978,10 +989,6 @@ class VirtualMachine:
     state, (x, y) = state.popn(2)
     state, ret = self.call_inplace_operator(state, name, x, y)
     return state.push(ret)
-
-  def trace_module_member(self, *args):
-    """Fired whenever a member of a module is converted."""
-    return NotImplemented
 
   def trace_unknown(self, *args):
     """Fired whenever we create a variable containing 'Unknown'."""
@@ -1169,7 +1176,7 @@ class VirtualMachine:
   def load_from(self, state, store, name, discard_concrete_values=False):
     """Load an item out of locals, globals, or builtins."""
     assert isinstance(store, abstract.SimpleAbstractValue)
-    assert store.is_lazy
+    assert isinstance(store, mixin.LazyMembers)
     store.load_lazy_attribute(name)
     bindings = store.members[name].Bindings(state.node)
     if not bindings:
@@ -1548,6 +1555,21 @@ class VirtualMachine:
       module = self.convert.unsolvable
     return module
 
+  def _maybe_load_overlay(self, name):
+    """Check if a module path is in the overlay dictionary."""
+    if name not in overlay_dict.overlays:
+      return None
+    if name in self.loaded_overlays:
+      overlay = self.loaded_overlays[name]
+    else:
+      overlay = overlay_dict.overlays[name](self)
+      # The overlay should be available only if the underlying pyi is.
+      if overlay.ast:
+        self.loaded_overlays[name] = overlay
+      else:
+        overlay = self.loaded_overlays[name] = None
+    return overlay
+
   @utils.memoize
   def _import_module(self, name, level):
     """Import the module and return the module object.
@@ -1566,18 +1588,9 @@ class VirtualMachine:
     if name:
       if level <= 0:
         assert level in [-1, 0]
-        if name in overlay_dict.overlays:
-          if name in self.loaded_overlays:
-            overlay = self.loaded_overlays[name]
-          else:
-            overlay = overlay_dict.overlays[name](self)
-            # The overlay should be available only if the underlying pyi is.
-            if overlay.ast:
-              self.loaded_overlays[name] = overlay
-            else:
-              overlay = self.loaded_overlays[name] = None
-          if overlay:
-            return overlay
+        overlay = self._maybe_load_overlay(name)
+        if overlay:
+          return overlay
         if level == -1 and self.loader.base_module:
           # Python 2 tries relative imports first.
           ast = (self.loader.import_relative_name(name) or
@@ -1589,7 +1602,11 @@ class VirtualMachine:
         base = self.loader.import_relative(level)
         if base is None:
           return None
-        ast = self.loader.import_name(base.name + "." + name)
+        full_name = base.name + "." + name
+        overlay = self._maybe_load_overlay(full_name)
+        if overlay:
+          return overlay
+        ast = self.loader.import_name(full_name)
     else:
       assert level > 0
       ast = self.loader.import_relative(level)
@@ -2050,17 +2067,20 @@ class VirtualMachine:
     # A variable of the values without a special cmp_rel implementation. Needed
     # because overloaded __eq__ implementations do not necessarily return a
     # bool; see, e.g., test_overloaded in test_cmp.
-    leftover = self.program.NewVariable()
+    leftover_x = self.program.NewVariable()
+    leftover_y = self.program.NewVariable()
     for b1 in x.bindings:
       for b2 in y.bindings:
         val = compare.cmp_rel(self, getattr(slots, op_name), b1.data, b2.data)
         if val is None:
-          leftover.AddBinding(b1.data, {b1}, state.node)
+          leftover_x.AddBinding(b1.data, {b1}, state.node)
+          leftover_y.AddBinding(b2.data, {b2}, state.node)
         else:
           ret.AddBinding(self.convert.bool_values[val], {b1, b2}, state.node)
-    if leftover.bindings:
+    if leftover_x.bindings:
       op = "__%s__" % op_name.lower()
-      state, leftover_ret = self.call_binary_operator(state, op, leftover, y)
+      state, leftover_ret = self.call_binary_operator(
+          state, op, leftover_x, leftover_y)
       ret.PasteVariable(leftover_ret, state.node)
     return state, ret
 
@@ -2218,15 +2238,17 @@ class VirtualMachine:
     """Store an attribute."""
     name = self.frame.f_code.co_names[op.arg]
     state, (val, obj) = state.popn(2)
-    # If `obj` is a single InterpreterClass or an instance of one, then grab its
+    # If `obj` is a single class or an instance of one, then grab its
     # __annotations__ dict so we can type-check the new attribute value.
     try:
-      maybe_cls = abstract_utils.get_atomic_value(obj)
+      obj_val = abstract_utils.get_atomic_value(obj)
     except abstract_utils.ConversionError:
       annotations_dict = None
     else:
-      if not isinstance(maybe_cls, abstract.InterpreterClass):
-        maybe_cls = maybe_cls.cls
+      if isinstance(obj_val, abstract.InterpreterClass):
+        maybe_cls = obj_val
+      else:
+        maybe_cls = obj_val.cls
       if isinstance(maybe_cls, abstract.InterpreterClass):
         if (self.options.check_attribute_types and
             "__annotations__" not in maybe_cls.members and
@@ -2240,6 +2262,20 @@ class VirtualMachine:
             maybe_cls.members)
         if annotations_dict:
           annotations_dict = annotations_dict.annotated_locals
+      elif isinstance(maybe_cls, abstract.PyTDClass):
+        node, attr = self.attribute_handler.get_attribute(
+            state.node, obj_val, name)
+        # Even when check_attribute_types is not enabled, Any overrides
+        # inference so that typeshed stubs that annotate attributes as Any are
+        # interpreted correctly.
+        if attr and (self.options.check_attribute_types or
+                     attr.data == [self.convert.unsolvable]):
+          typ = self.convert.merge_classes(attr.data)
+          annotations_dict = {name: abstract_utils.Local(
+              state.node, op, typ, None, self)}
+          state = state.change_cfg_node(node)
+        else:
+          annotations_dict = None
       else:
         annotations_dict = None
     val = self._apply_annotation(state, op, name, val, annotations_dict,
@@ -3373,3 +3409,50 @@ class VirtualMachine:
     state, func = state.pop()
     state, result = self.call_function_with_state(state, func, args)
     return state.push(result)
+
+  # New in 3.9
+  # TODO(rechen): These opcodes are stubs; implement them.
+
+  def byte_RERAISE(self, state, op):
+    del op
+    return state
+
+  def byte_WITH_EXCEPT_START(self, state, op):
+    del op
+    return state
+
+  def byte_LOAD_ASSERTION_ERROR(self, state, op):
+    del op
+    return state
+
+  def byte_LIST_TO_TUPLE(self, state, op):
+    del op
+    return state
+
+  def byte_IS_OP(self, state, op):
+    del op
+    return state
+
+  def byte_CONTAINS_OP(self, state, op):
+    del op
+    return state
+
+  def byte_JUMP_IF_NOT_EXC_MATCH(self, state, op):
+    del op
+    return state
+
+  def byte_LIST_EXTEND(self, state, op):
+    del op
+    return state
+
+  def byte_SET_UPDATE(self, state, op):
+    del op
+    return state
+
+  def byte_DICT_MERGE(self, state, op):
+    del op
+    return state
+
+  def byte_DICT_UPDATE(self, state, op):
+    del op
+    return state
